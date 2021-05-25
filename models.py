@@ -11,8 +11,6 @@ from torch_geometric.utils import to_dense_batch, add_self_loops
 from utils import *
 
 
-from resnet import ResnetEncoderModel
-
 import torch
 from torch_geometric.nn import MessagePassing
 
