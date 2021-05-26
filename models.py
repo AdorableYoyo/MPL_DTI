@@ -32,16 +32,12 @@ num_aromatic=2
 class DTI_model(nn.Module):
     def __init__(self, chem_pretrained, protein_descriptor, 
                 frozen, frozen_list,device,
-                model, batch_size):
+                model):
                
         super(DTI_model, self).__init__()
         
         self.protein_descriptor = protein_descriptor
         self.frozen = frozen
-       
-        self.batch_size = batch_size
-
-
         self.ligandEmbedding = GNN(num_layer=5,
                                    emb_dim=300,
                                    JK='last',
@@ -99,8 +95,8 @@ class DTI_model(nn.Module):
                     batch_protein_repr = self.proteinEmbedding(batch_protein_tokenized)[0]
             else:
                 batch_protein_repr = self.proteinEmbedding(batch_protein_tokenized)[0]
-
-            batch_protein_repr_resnet = self.resnet(batch_protein_repr.unsqueeze(1)).reshape(self.batch_size,1,-1)#(batch_size,1,256)
+            batch_protein_repr_resnet = self.resnet(batch_protein_repr.unsqueeze(1)).reshape(batch_protein_tokenized.shape[0],1,-1)
+            #batch_protein_repr_resnet = self.resnet(batch_protein_repr.unsqueeze(1)).reshape(self.batch_size,1,-1)#(batch_size,1,256)
 
         # ---------------ligand embedding ready -------------
         node_representation = self.ligandEmbedding(batch_chem_graphs.x, batch_chem_graphs.edge_index,

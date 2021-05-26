@@ -22,14 +22,14 @@ from transformers import BertTokenizer
 from transformers.configuration_albert import AlbertConfig
 from transformers.modeling_albert import AlbertForMaskedLM
 from transformers.modeling_albert import load_tf_weights_in_albert
-
+from torch.cuda import amp
 #torch.autograd.set_detect_anomaly(True)
 
 logger = logging.getLogger(__name__)
 
 def train(teacher_model,student_model,tokenizer,
             chem_dict,protein_dict,t_optimizer, t_scheduler, s_optimizer,s_scheduler,
-              criterion, args):
+              criterion,s_scaler, t_scaler, args):
 
     fname = ( "TFlogs/"+ str(args.runseed) + "/" + args.filename)
 
@@ -44,7 +44,7 @@ def train(teacher_model,student_model,tokenizer,
         args.debug_ratio)
 
     train_un = pd.read_csv('unlabeled_data.csv')
-    print(f'unlabel train. size : {train_un.shape[0]}')
+    print('unlabel train. size {}:'.format(train_un.shape[0]))
     
     
     for step in range(0, args.global_step):
@@ -69,46 +69,57 @@ def train(teacher_model,student_model,tokenizer,
         chem_un = chem_un.to(args.device)
         pro_un = pro_un.to(args.device)
 
-        t_logits_un = teacher_model(pro_un, chem_un)
-        
-        #t_loss_l = criterion(t_logits_l, y_l)
-        
-        _,hard_pseudo_label = torch.max(t_logits_un.detach(), dim=1)
-        
-        s_logits_l = student_model(pro_l, chem_l)
-        s_logits_un = student_model(pro_un, chem_un)
-        s_loss_l_old = F.cross_entropy(s_logits_l.detach(), y_l)
-        s_loss = criterion(s_logits_un, hard_pseudo_label)
+        with amp.autocast(enabled=args.amp):
+            t_logits_un = teacher_model(pro_un, chem_un)
+            
+            #t_loss_l = criterion(t_logits_l, y_l)
+            
+            _,hard_pseudo_label = torch.max(t_logits_un.detach(), dim=1)
+            
+            s_logits_l = student_model(pro_l, chem_l)
+            s_logits_un = student_model(pro_un, chem_un)
+            s_loss_l_old = F.cross_entropy(s_logits_l.detach(), y_l)
+            s_loss = criterion(s_logits_un, hard_pseudo_label)
 
-        s_optimizer.zero_grad()
-        s_loss.backward()
-        s_optimizer.step()
+        s_scaler.scale(s_loss).backward()
+        s_scaler.step(s_optimizer)
+        s_scaler.update()
         s_scheduler.step()
+        
+        #s_optimizer.zero_grad()
+        #s_loss.backward()
+        #s_optimizer.step()
+        #s_scheduler.step()
 
 
  
-        #with amp.autocast(enabled=args.amp):   
-        t_logits_un = teacher_model(pro_un, chem_un)
-        t_logits_l = teacher_model(pro_l, chem_l)
-        t_loss_l = criterion(t_logits_l, y_l)
-        
-        with torch.no_grad():
-            s_logits_l = student_model(pro_l, chem_l)
+        with amp.autocast(enabled=args.amp):   
+            t_logits_un = teacher_model(pro_un, chem_un)
+            t_logits_l = teacher_model(pro_l, chem_l)
+            t_loss_l = criterion(t_logits_l, y_l)
+            
+            with torch.no_grad():
+                s_logits_l = student_model(pro_l, chem_l)
 
-        s_loss_l_new = F.cross_entropy(s_logits_l.detach(), y_l)
+            s_loss_l_new = F.cross_entropy(s_logits_l.detach(), y_l)
 
-        dot_product = s_loss_l_old - s_loss_l_new
+            dot_product = s_loss_l_old - s_loss_l_new
 
-        _, hard_pseudo_label = torch.max(t_logits_un.detach(), dim=1)
-        
-        #t_loss =  dot_product * t_loss_l
-        t_loss_un =  dot_product * F.cross_entropy(t_logits_un,hard_pseudo_label) 
-        t_loss = t_loss_un + t_loss_l
+            _, hard_pseudo_label = torch.max(t_logits_un.detach(), dim=1)
+            
+            #t_loss =  dot_product * t_loss_l
+            t_loss_un =  dot_product * F.cross_entropy(t_logits_un,hard_pseudo_label) 
+            t_loss = t_loss_un + t_loss_l
       #  print(f'if there is NAN in s loss : {t_loss.isnan().any()}')
-        t_optimizer.zero_grad()
-        t_loss.backward()
-        t_optimizer.step()
+        t_scaler.scale(t_loss).backward()
+        t_scaler.step(t_optimizer)
+        t_scaler.update()
         t_scheduler.step()
+        
+        #t_optimizer.zero_grad()
+        #t_loss.backward()
+        #t_optimizer.step()
+        #t_scheduler.step()
        
         teacher_model.zero_grad()
         student_model.zero_grad()
@@ -118,9 +129,8 @@ def train(teacher_model,student_model,tokenizer,
         
         
         pbar.set_description(
-            f"S_loss: {s_losses.avg:.4f}. "
-            f"T_loss: {t_losses.avg:.4f}. "
-          )
+            "S_loss: {:.4f} , T_loss: {:.4f} ". format(s_losses.avg,t_losses.avg) )
+            #print("{}\t{:.5f}\t{:.5f}\t{:.5f}".format(datatype, metric[0], metric[1], metric[2]))
         pbar.update()
        
         args.num_eval = step//args.eval_at
@@ -212,10 +222,11 @@ def main():
     parser.add_argument('--frozen', type=str, default='partial',help='choose from {whole, none,partial}')
     parser.add_argument('--global_step', default=20, type=int, help='Number of training epoches ')
     parser.add_argument('--eval_at', default=10, type=int, help='')
-    parser.add_argument('--batch_size', default=128, type=int, help="Batch size")
+    parser.add_argument('--batch_size', default=64, type=int, help="Batch size")
     parser.add_argument('--lr', type=float, default=2e-5, help="Initial learning rate")
     parser.add_argument('--runseed',type=int, default=42,help='random seed')
-    parser.add_argument("--device", type=int, default=2, help="which gpu to use if any (default: 0)")
+    parser.add_argument("--device", type=int, default=3, help="which gpu to use if any (default: 0)")
+    #parser.add_argument("--device", type=int, default=3, help="which gpu for teacher model to use if any (default: 0)")
     parser.add_argument("--filename", type=str, default="0524test", help="output filename")
     parser.add_argument("--chem_path", type=str, default= "data/ChEMBLE26/" )
     parser.add_argument("--protein_dict_path", type=str, default= 'protein/' + 'unipfam2triplet.pkl' )
@@ -231,18 +242,16 @@ def main():
     parser.add_argument('--momentum', default=0.5, type=float, help='SGD Momentum')
     parser.add_argument('--nesterov', action='store_true', help='use nesterov')
     parser.add_argument('--grad_clip', default=0.0, type=float, help='gradient norm clipping')
-    parser.add_argument('--mu', default=1, type=int, help='coefficient of unlabeled batch size')
+    parser.add_argument('--mu', default=2, type=int, help='coefficient of unlabeled batch size')
     args = parser.parse_args()
 
-    print(f"show all arguments configuration.....{args}")
+    print("show all arguments configuration.....:{}".format(args))
     
     
-    args.device = (
-        torch.device("cuda:" + str(args.device))
-        if torch.cuda.is_available()
-        else torch.device("cpu")
-    )
+    args.device = (torch.device("cuda:" + str(args.device))if torch.cuda.is_available()else torch.device("cpu"))
+    #args.t_device = (torch.device("cuda:" + str(args.t_device))if torch.cuda.is_available()else torch.device("cpu"))
 
+    #args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.cuda.manual_seed(args.runseed) 
 
     np.random.seed(args.runseed)
@@ -272,20 +281,28 @@ def main():
     
     teacher_model = DTI_model( chem_pretrained=args.chem_pretrained , protein_descriptor=args.protein_descriptor, 
                 frozen=args.frozen, frozen_list=args.frozen_list ,device=args.device ,
-                model = prot_descriptor, batch_size=args.batch_size)
+                model = prot_descriptor)
 
     student_model = DTI_model( chem_pretrained=args.chem_pretrained , protein_descriptor=args.protein_descriptor, 
                 frozen=args.frozen, frozen_list=args.frozen_list ,device=args.device ,
-                model = prot_descriptor, batch_size=args.batch_size)
+                model = prot_descriptor)
                 
-
+   
+    #teacher_model = torch.nn.DataParallel(teacher_model)
+    
+    #student_model = torch.nn.DataParallel(student_model)
+    
     teacher_model = teacher_model.to(args.device)
+    
     student_model = student_model.to(args.device)
 
     loss_fn = torch.nn.CrossEntropyLoss()  
 
+    t_scaler = amp.GradScaler(enabled=args.amp)
+    s_scaler = amp.GradScaler(enabled=args.amp)
+
     teacher_model.zero_grad()
-    student_model.zero_grad
+    student_model.zero_grad()
 
     t_parameters = list(teacher_model.parameters())
     t_optimizer = torch.optim.Adam(t_parameters, lr=args.lr, weight_decay=args.l2)
@@ -298,7 +315,7 @@ def main():
     train(teacher_model, student_model, prot_tokenizer,
             chem_dict,protein_dict,t_optimizer,t_scheduler, 
             s_optimizer,s_scheduler, 
-             loss_fn, args)
+             loss_fn, s_scaler, t_scaler,args)
     print('Finished training! ')
 
 if __name__ == '__main__':
