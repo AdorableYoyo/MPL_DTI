@@ -87,4 +87,30 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+'''
+class unlabelDataset(Dataset):
+    def __init__(self, root):
+        self.data = pd.read_csv(root)
+        
+    def __len__(self):
+        return len(self.data)
+    def __getitem__(self, idx):
+        chem = self.data['InChIKey'].values.tolist()
+        pro = self.data['uniprot+pfam'].values.tolist()
+        #y = self.data['Activity'].values
+        sample = {'chem':chem[idx],'pro':pro[idx]}
+        return sample
 
+class labelDataset(Dataset):
+    def __init__(self, root):
+        self.data = pd.read_csv(root)
+        
+    def __len__(self):
+        return len(self.data)
+    def __getitem__(self, idx):
+        chem = self.data['InChIKey'].values.tolist()
+        pro = self.data['uniprot+pfam'].values.tolist()
+        y = self.data['Activity'].values[idx]
+        sample = {'chem':chem[idx],'pro':pro[idx]}
+        return sample,y
+'''

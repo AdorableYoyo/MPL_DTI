@@ -260,21 +260,23 @@ class MoleculeDataset(InMemoryDataset):
         torch.save((data, slices), self.processed_paths[0])
 
 
-def get_repr_DTI(batch_data,tokenizer,chem_dict,protein_dict,prot_descriptor_choice):
+def get_repr_DTI_testloader(batch_data,tokenizer,chem_dict,protein_dict,prot_descriptor_choice):
     #  . . . .  chemicals  . . . .
-    chem_smiles = chem_dict[batch_data['InChIKey'].values.tolist()].values.tolist()
+    #chem_smiles = chem_dict[batch_data['InChIKey'].values.tolist()].values.tolist()
+    chem_smiles = chem_dict[batch_data['chem']].values.tolist()
     chem_graph_list = []
     for smiles in chem_smiles:
         mol = Chem.MolFromSmiles(smiles)
         graph = mol_to_graph_data_obj_simple(mol)
         chem_graph_list.append(graph)
-    chem_graphs_loader = DataLoader(chem_graph_list, batch_size=batch_data.shape[0],
-                                    shuffle=False)
+    chem_graphs_loader = DataLoader(chem_graph_list, batch_size=len(batch_data['chem']),shuffle=False)
+    #chem_graphs_loader = DataLoader(chem_graph_list, batch_size=batch_data.shape[0],shuffle=False)
     for batch in chem_graphs_loader:
         chem_graphs = batch
     #  . . . .  proteins  . . . .
     if prot_descriptor_choice =='DISAE':
-        uniprot_list = batch_data['uniprot+pfam'].values.tolist()
+        #uniprot_list = batch_data['uniprot+pfam'].values.tolist()
+        uniprot_list = batch_data['pro']
         protein_tokenized = torch.tensor([tokenizer.encode(protein_dict[uni]) for uni in uniprot_list  ])
 
     elif prot_descriptor_choice == 'TAPE':
@@ -287,4 +289,25 @@ def get_repr_DTI(batch_data,tokenizer,chem_dict,protein_dict,prot_descriptor_cho
         batch_seq = list(zip(list(protein_dict[batch_data['uniprot+pfam']].index),
                              protein_dict[batch_data['uniprot+pfam']].values.tolist()))
         batch_labels, batch_strs, protein_tokenized = tokenizer(batch_seq)
+    return chem_graphs, protein_tokenized
+
+def get_repr_DTI(batch_data,tokenizer,chem_dict,protein_dict,prot_descriptor_choice):
+    #  . . . .  chemicals  . . . .
+    chem_smiles = chem_dict[batch_data['InChIKey'].values.tolist()].values.tolist()
+    #chem_smiles = chem_dict[batch_data['chem']].values.tolist()
+    chem_graph_list = []
+    for smiles in chem_smiles:
+        mol = Chem.MolFromSmiles(smiles)
+        graph = mol_to_graph_data_obj_simple(mol)
+        chem_graph_list.append(graph)
+    #chem_graphs_loader = DataLoader(chem_graph_list, batch_size=len(batch_data['chem']),shuffle=False)
+    chem_graphs_loader = DataLoader(chem_graph_list, batch_size=batch_data.shape[0],shuffle=False)
+    for batch in chem_graphs_loader:
+        chem_graphs = batch
+    #  . . . .  proteins  . . . .
+    if prot_descriptor_choice =='DISAE':
+        uniprot_list = batch_data['uniprot+pfam'].values.tolist()
+        #uniprot_list = batch_data['pro']
+        protein_tokenized = torch.tensor([tokenizer.encode(protein_dict[uni]) for uni in uniprot_list  ])
+
     return chem_graphs, protein_tokenized

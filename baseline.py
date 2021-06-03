@@ -164,7 +164,7 @@ def main():
     parser.add_argument('--batch_size', default=2, type=int, help="Batch size")
     parser.add_argument('--lr', type=float, default=2e-5, help="Initial learning rate")
     parser.add_argument('--runseed',type=int, default=42,help='random seed')
-    parser.add_argument("--device", type=int, default=1, help="which gpu to use if any (default: 0)")
+    parser.add_argument("--device", type=int, default=7, help="which gpu to use if any (default: 0)")
     parser.add_argument("--filename", type=str, default="0524test", help="output filename")
     parser.add_argument("--chem_path", type=str, default= "data/ChEMBLE26/" )
     parser.add_argument("--protein_dict_path", type=str, default= 'protein/' + 'unipfam2triplet.pkl' )
@@ -221,7 +221,7 @@ def main():
 
     student_model = DTI_model( chem_pretrained=args.chem_pretrained , protein_descriptor=args.protein_descriptor, 
                 frozen=args.frozen, frozen_list=args.frozen_list ,device=args.device ,
-                model = prot_descriptor, batch_size=args.batch_size)
+                model = prot_descriptor)
                 
     student_model = student_model.to(args.device)
 
