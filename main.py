@@ -55,7 +55,7 @@ def train(teacher_model,student_model,tokenizer,
    
         teacher_model.train()
         student_model.train()
-            
+        #while hard_pseudo_label > 1.2 and  hard_pseudo_label <1.0:    
         x_un = train_un.sample(args.batch_size*args.mu)
         #chem_un, pro_un = get_repr_DTI(x_un, tokenizer, chem_dict, protein_dict,args.protein_descriptor)
         
@@ -78,9 +78,14 @@ def train(teacher_model,student_model,tokenizer,
         del t_logits
         t_loss_l = criterion(t_logits_l, y_l)
         #t_loss_l = criterion(t_logits_l, y_l)
-        
-        _,hard_pseudo_label = torch.max(t_logits_un.detach(), dim=1)
-        #ratio = ((hard_pseudo_label==1).sum(dim=0))/((hard_pseudo_label==0).sum(dim=0))
+        soft_pseudo_label = torch.softmax(t_logits_un.detach()/args.temperature, dim=1)
+        _, hard_pseudo_label = torch.max(soft_pseudo_label, dim=1)
+     
+            
+        #_,hard_pseudo_label = torch.max(t_logits_un.detach(), dim=1)
+        #y_ratio =  ((y_l==1).sum(dim=0))/((y_l==0).sum(dim=0))
+        #pl_ratio = ((hard_pseudo_label==1).sum(dim=0))/((hard_pseudo_label==0).sum(dim=0))
+        #print(f'true label ratio:{y_ratio}, PL ratio: {pl_ratio}')
         #s_logits_l = student_model(pro_l, chem_l)
         #s_logits_un = student_model(pro_un, chem_un)
 
@@ -221,7 +226,7 @@ def main():
     parser.add_argument('--ALBERT_raw', type=str2bool, nargs='?',const=True, default=False)
     parser.add_argument('--frozen', type=str, default='whole',help='choose from {whole, none,partial}')
     parser.add_argument('--global_step', default=20, type=int, help='Number of training epoches ')
-    parser.add_argument('--eval_at', default=10, type=int, help='')
+    parser.add_argument('--eval_at', default=100, type=int, help='')
     parser.add_argument('--batch_size', default=64, type=int, help="Batch size")
     parser.add_argument('--lr', type=float, default=2e-5, help="Initial learning rate")
     parser.add_argument('--runseed',type=int, default=42,help='random seed')
@@ -231,6 +236,7 @@ def main():
     parser.add_argument("--protein_dict_path", type=str, default= 'protein/' + 'unipfam2triplet.pkl' )
     parser.add_argument("--amp", action="store_true", default =True, help="use 16-bit (mixed) precision")
     parser.add_argument('--label_smoothing', default=0, type=float, help='label smoothing alpha')
+    parser.add_argument('--temperature', default=1, type=float, help='pseudo label temperature')
     parser.add_argument('--l2',type=int, default=0.0001, help='weight decay')
     parser.add_argument('--exp_name', type=str, default= 'undefined_exp', help='exp name')
     parser.add_argument('--albertconfig',type=str, default= "data/albertdata/DISAE_plus/albert_config_tiny_google.json",help='albert config')
@@ -292,8 +298,8 @@ def main():
     teacher_model = teacher_model.to(args.device)
     student_model = student_model.to(args.device)
 
-    loss_fn = torch.nn.CrossEntropyLoss()  
-
+    #loss_fn = torch.nn.CrossEntropyLoss()  
+    criterion = create_loss_fn(args)
     teacher_model.zero_grad()
     student_model.zero_grad()
 
@@ -308,7 +314,7 @@ def main():
     train(teacher_model, student_model, prot_tokenizer,
             chem_dict,protein_dict,t_optimizer,t_scheduler, 
             s_optimizer,s_scheduler, 
-             loss_fn, args)
+             criterion, args)
     print('Finished training! ')
 
 if __name__ == '__main__':
