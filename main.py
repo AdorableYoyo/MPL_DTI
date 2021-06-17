@@ -4,15 +4,13 @@ import os
 import argparse
 import numpy as np
 import torch
-import time
 from sklearn import metrics
 from tensorboardX import SummaryWriter
 import shutil
 from tqdm import tqdm 
 from torch.nn import functional as F
 import logging
-import math 
-from torch import optim
+import random
 
 from models import *
 from utils import  *
@@ -55,40 +53,21 @@ def train(teacher_model,student_model,tokenizer,
    
         teacher_model.train()
         student_model.train()
-        #while hard_pseudo_label > 1.2 and  hard_pseudo_label <1.0:    
+         
         x_un = train_un.sample(args.batch_size*args.mu)
-        #chem_un, pro_un = get_repr_DTI(x_un, tokenizer, chem_dict, protein_dict,args.protein_descriptor)
-        
         x_l = train_l.sample(args.batch_size)
         x = pd.concat([x_l,x_un])
         y_l = torch.LongTensor(x_l['Activity'].values).to(args.device)
         chem, pro = get_repr_DTI(x,tokenizer, chem_dict, protein_dict, args.protein_descriptor)
-        #chem_l, pro_l = get_repr_DTI(x_l, tokenizer, chem_dict, protein_dict,args.protein_descriptor)
-        #chem_l = chem_l.to(args.device)
-        #pro_l = pro_l.to(args.device)
-        #chem_un = chem_un.to(args.device)
-        #pro_un = pro_un.to(args.device)
         chem = chem.to(args.device)
         pro = pro.to(args.device)
         t_logits = teacher_model(pro,chem)
         t_logits_l = t_logits[:args.batch_size]
         t_logits_un = t_logits[args.batch_size:]
-        #t_logits_un = teacher_model(pro_un, chem_un)
-        #t_logits_l = teacher_model(pro_l, chem_l)
         del t_logits
         t_loss_l = criterion(t_logits_l, y_l)
-        #t_loss_l = criterion(t_logits_l, y_l)
         soft_pseudo_label = torch.softmax(t_logits_un.detach()/args.temperature, dim=1)
         _, hard_pseudo_label = torch.max(soft_pseudo_label, dim=1)
-     
-            
-        #_,hard_pseudo_label = torch.max(t_logits_un.detach(), dim=1)
-        #y_ratio =  ((y_l==1).sum(dim=0))/((y_l==0).sum(dim=0))
-        #pl_ratio = ((hard_pseudo_label==1).sum(dim=0))/((hard_pseudo_label==0).sum(dim=0))
-        #print(f'true label ratio:{y_ratio}, PL ratio: {pl_ratio}')
-        #s_logits_l = student_model(pro_l, chem_l)
-        #s_logits_un = student_model(pro_un, chem_un)
-
         s_logits = student_model(pro,chem)
         s_logits_l = s_logits[:args.batch_size]
         s_logits_un = s_logits[args.batch_size:]
@@ -101,25 +80,13 @@ def train(teacher_model,student_model,tokenizer,
         s_optimizer.step()
         s_scheduler.step()
 
-
- 
-        #with amp.autocast(enabled=args.amp):   
-        #t_logits_un = teacher_model(pro_un, chem_un)
-     
-        
         with torch.no_grad():
             s_logits_l = student_model(pro,chem)[:args.batch_size]
-
         s_loss_l_new = F.cross_entropy(s_logits_l.detach(), y_l)
-
         dot_product = s_loss_l_old - s_loss_l_new
-
-        #_, hard_pseudo_label = torch.max(t_logits_un.detach(), dim=1)
-        #ratio = ((hard_pseudo_label==1).sum(dim=0))/((hard_pseudo_label==0).sum(dim=0))
-        #t_loss =  dot_product * t_loss_l
         t_loss_un =  dot_product * F.cross_entropy(t_logits_un,hard_pseudo_label) 
         t_loss = t_loss_un + t_loss_l
-      #  print(f'if there is NAN in s loss : {t_loss.isnan().any()}')
+
         t_optimizer.zero_grad()
         t_loss.backward()
         t_optimizer.step()
@@ -146,8 +113,8 @@ def train(teacher_model,student_model,tokenizer,
             writer.add_scalar("train/1.s_loss", s_losses.avg, args.num_eval)
             writer.add_scalar("train/2.t_loss", t_losses.avg, args.num_eval)
 
-            dev_eval = dev.sample(1000)
-            test_eval = test.sample(1000)
+            dev_eval = dev.sample(2000)
+            test_eval = test.sample(2000)
 
             print('dev eval number:', dev_eval.shape[0])
             print('test eval number:', test_eval.shape[0])
@@ -213,7 +180,6 @@ def evaluate(data, args, tokenizer, chem_dict, protein_dict, model, datatype='de
 
         f1, auc, aupr = evaluate_binary_predictions(collected_labels, collected_logits)
 
-    #print("{}\t{:.5f}\t{:.5f}\t{:.5f}".format(datatype, metric[0], metric[1], metric[2]))
     return f1, auc, aupr
 
 
@@ -230,6 +196,7 @@ def main():
     parser.add_argument('--batch_size', default=64, type=int, help="Batch size")
     parser.add_argument('--lr', type=float, default=2e-5, help="Initial learning rate")
     parser.add_argument('--runseed',type=int, default=42,help='random seed')
+    parser.add_argument('--batchseed',type=int, default=44,help='minibatch seed')
     parser.add_argument("--device", type=int, default=2, help="which gpu to use if any (default: 0)")
     parser.add_argument("--filename", type=str, default="0524test", help="output filename")
     parser.add_argument("--chem_path", type=str, default= "data/ChEMBLE26/" )
@@ -259,9 +226,11 @@ def main():
         else torch.device("cpu")
     )
 
-    torch.cuda.manual_seed(args.runseed) 
 
-    np.random.seed(args.runseed)
+    torch.manual_seed(args.runseed)
+    torch.cuda.manual_seed(args.runseed) 
+    random.seed(args.runseed)
+    np.random.seed(args.batchseed)
     torch.set_num_threads(8)
    
     logger.info(dict(args._get_kwargs()))
